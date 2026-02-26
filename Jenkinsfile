@@ -6,7 +6,10 @@ pipeline {
         stage('Build Backend Image') {
             steps {
                 sh '''
+                echo "Removing old backend image (if exists)..."
                 docker rmi -f backend-app || true
+
+                echo "Building backend image..."
                 docker build -t backend-app backend
                 '''
             }
@@ -15,18 +18,18 @@ pipeline {
         stage('Deploy Backend Containers') {
             steps {
                 sh '''
-                # Remove old containers if they exist
-                docker rm -f backend1 backend2 nginx-lb || true
+                echo "Creating Docker network (if not exists)..."
+                docker network create app-network || true
 
-                # Remove old network if it exists
-                docker network rm app-network || true
+                echo "Removing old backend containers..."
+                docker rm -f backend1 backend2 || true
 
-                # Create fresh network
-                docker network create app-network
-
-                # Start backend containers on same network
+                echo "Starting backend containers..."
                 docker run -d --name backend1 --network app-network backend-app
                 docker run -d --name backend2 --network app-network backend-app
+
+                echo "Waiting for backend services to start..."
+                sleep 10
                 '''
             }
         }
@@ -34,21 +37,18 @@ pipeline {
         stage('Deploy NGINX Load Balancer') {
             steps {
                 sh '''
-                # Start nginx on same network
+                echo "Removing old NGINX container..."
+                docker rm -f nginx-lb || true
+
+                echo "Starting NGINX load balancer..."
                 docker run -d \
                   --name nginx-lb \
                   --network app-network \
                   -p 80:80 \
+                  -v $(pwd)/nginx/default.conf:/etc/nginx/conf.d/default.conf \
                   nginx
 
-                # Copy updated config
-                docker cp nginx/default.conf nginx-lb:/etc/nginx/conf.d/default.conf
-
-                # Give containers time to register in Docker DNS
-                sleep 3
-
-                # Reload nginx
-                docker exec nginx-lb nginx -s reload
+                echo "NGINX deployed successfully."
                 '''
             }
         }
@@ -56,7 +56,7 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline executed successfully. NGINX load balancer is running.'
+            echo 'Pipeline executed successfully. Load balancer is running at http://localhost'
         }
         failure {
             echo 'Pipeline failed. Check console logs for errors.'
